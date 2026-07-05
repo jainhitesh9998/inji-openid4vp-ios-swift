@@ -357,11 +357,12 @@ final class ClientIdPrefixBasedAuthorizationRequestTests : XCTestCase {
     func testFetchAuthorizationRequestByReferenceWithUnsignedRequestObjectViaPostIsAcceptedForRedirectUri() async throws {
         mockNetworkManager.clearResponses()
         // Unsigned (alg:none) request object delivered by reference, as real redirect_uri verifiers
-        // (e.g. Digital Bazaar / Veres) do with request_uri_method=post.
+        // (e.g. Digital Bazaar / Veres) do with request_uri_method=post. The verifier cannot echo
+        // wallet_nonce (unsigned), so the wallet must neither send nor validate it (§5.10).
         let unsignedRequestObject = try createUnsignedAuthorizationRequestObject(
             clientIdPrefix: .redirectUri,
-            authorizationRequestParams: mergeMaps(authorizationRequestParamsWithValue, redirectUriSchemeClientIdParameter, ["wallet_nonce": "mock-nonce"]),
-            applicableFields: authRequestWithRedirectUriByValue + [AuthorizationRequestFieldConstants.walletNonce]
+            authorizationRequestParams: mergeMaps(authorizationRequestParamsWithValue, redirectUriSchemeClientIdParameter),
+            applicableFields: authRequestWithRedirectUriByValue
         )
         let authorizationRequestParametersByReference: [String : Any] = createAuthorizationRequest(paramList: authRequestParamsByReference , requestParams: mergeMaps(authorizationRequestParamsWithValue, redirectUriSchemeClientIdParameter, ["request_uri_method": "post"]), specVersion: .v1) as [String : Any]
         mockNetworkManager.setMockResponse(for: requestUri.absoluteString, responseBody: unsignedRequestObject)
@@ -381,6 +382,7 @@ final class ClientIdPrefixBasedAuthorizationRequestTests : XCTestCase {
             XCTAssertEqual(mockAuthHandler.authorizationRequestParameters[AuthorizationRequestFieldConstants.responseType] as? String, "vp_token")
             XCTAssertEqual(mockAuthHandler.authorizationRequestParameters[AuthorizationRequestFieldConstants.responseMode] as? String, "direct_post")
             XCTAssertEqual(mockNetworkManager.recordedRequests[requestUri.absoluteString]?.requestMethod, .post, "Expected HTTP method to be POST")
+            XCTAssertNil(mockNetworkManager.recordedRequests[requestUri.absoluteString]?.requestBody?[AuthorizationRequestFieldConstants.walletNonce], "wallet_nonce must not be sent for an unsigned (redirect_uri) request")
         }
     }
 

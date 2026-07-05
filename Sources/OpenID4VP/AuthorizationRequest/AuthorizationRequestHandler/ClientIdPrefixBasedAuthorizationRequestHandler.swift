@@ -123,9 +123,15 @@ class ClientIdPrefixBasedAuthorizationRequestHandlerBaseClass  {
         var headers: [String: String] = [Header.accept.rawValue: ContentTypes.applicationJwt.rawValue]
         
         if requestUriMethod == .post {
-            body = [AuthorizationRequestFieldConstants.walletNonce: walletNonce]
+            body = [:]
+            // wallet_nonce is a signed-request replay protection (§5.10 — echoed "in the signed
+            // authorization request object"). A redirect_uri yields an unsigned request that can't
+            // echo it, so don't send it (else the §5.10.1 "MUST terminate if absent" check fires).
+            if delegate.isSignedRequestSupported() {
+                body?[AuthorizationRequestFieldConstants.walletNonce] = walletNonce
+            }
             headers[Header.contentType.rawValue] = ContentTypes.applicationFormUrlEncoded.rawValue
-            
+
             try isClientIdPrefixSupported(walletConfig: walletConfig)
             
             do {
@@ -191,7 +197,8 @@ class ClientIdPrefixBasedAuthorizationRequestHandlerBaseClass  {
     /// that declare unsigned support and is never signature-verified; anything else is treated as
     /// signed, accepted only for prefixes that declare signed support, and signature-verified.
     private func processRequestObject(_ requestObject: String, deliveredVia: String, requestUriMethod: RequestUriMethod?) async throws -> [String: Any] {
-        if joseHeaderAlgorithm(of: requestObject) == unsignedRequestAlgorithm {
+        let isSignedRequestObject = joseHeaderAlgorithm(of: requestObject) != unsignedRequestAlgorithm
+        if !isSignedRequestObject {
             guard (try delegate.isUnsignedRequestSupported()) else {
                 throw InvalidData(
                     message: "unsigned request is not supported for given client_id_prefix - \(delegate.clientIdPrefix())",
@@ -209,7 +216,8 @@ class ClientIdPrefixBasedAuthorizationRequestHandlerBaseClass  {
         }
 
         let authorizationRequestObject = try JWSHandler.extractDataJsonFromJws(jws: requestObject, jwsPart: .payload)
-        if requestUriMethod == .post {
+        // wallet_nonce is only sent + echoed for signed requests (§5.10); skip for unsigned (alg:none).
+        if requestUriMethod == .post && isSignedRequestObject {
             try validateWalletNonce(authorizationRequestObject, walletNonce)
         }
 
