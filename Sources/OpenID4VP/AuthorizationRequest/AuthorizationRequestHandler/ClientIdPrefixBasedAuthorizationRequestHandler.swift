@@ -30,7 +30,10 @@ class ClientIdPrefixBasedAuthorizationRequestHandlerBaseClass  {
     var className = String(describing: ClientIdPrefixBasedAuthorizationRequestHandler.self)
     
     let errorMessageForMismatchedAcceptableType: String = "does not match any acceptable types"
-    
+
+    /// JOSE `alg` header value that denotes an unsigned request object (RFC 7519 §6.1).
+    private let unsignedRequestAlgorithm = "none"
+
     init(clientId: String,
          specVersion: SpecVersion,
          authorizationRequestParameters: [String: Any],
@@ -96,29 +99,15 @@ class ClientIdPrefixBasedAuthorizationRequestHandlerBaseClass  {
 
     private func handleRequestObjectAsValue(_ request: String) async throws {
         try validate(request, fieldPath: AuthorizationRequestFieldConstants.request, className: className)
-        guard (delegate.isSignedRequestSupported()) else {
-            throw InvalidData(
-                message: "Signed request (via request) is not supported for given client_id_prefix - \(delegate.clientIdPrefix())",
-                className: className
-            )
-        }
-        
-        try await validateJWTRequest(request)
-        let authorizationRequestObject =  try JWSHandler.extractDataJsonFromJws(jws: request, jwsPart: .payload)
-        
-        try validateAuthorizationRequestObjectAndParameters(params: self.authorizationRequestParameters, requestObject: authorizationRequestObject)
-        
-        self.authorizationRequestParameters = authorizationRequestObject
+
+        self.authorizationRequestParameters = try await processRequestObject(
+            request,
+            deliveredVia: AuthorizationRequestFieldConstants.request,
+            requestUriMethod: nil
+        )
     }
-    
+
     private func handleRequestObjectByReference(_ requestUri: String) async throws {
-        guard (delegate.isSignedRequestSupported()) else {
-            throw InvalidData(
-                message: "Signed request (via request_uri) is not supported for given client_id_prefix - \(delegate.clientIdPrefix())",
-                className: className
-            )
-        }
-        
         try validate(requestUri, fieldPath: AuthorizationRequestFieldConstants.requestUri, className: className)
         guard isValidUri(requestUri)
         else {
@@ -180,21 +169,63 @@ class ClientIdPrefixBasedAuthorizationRequestHandlerBaseClass  {
     }
     
     private func validateRequestUriResponse(_ requestUriResponse: String, requestUriMethod: RequestUriMethod) async throws -> [String: Any] {
-        guard isJWS(requestUriResponse) else {
+        // A request object is a compact JWT that is either signed (header.payload.signature) or
+        // unsigned per RFC 7519 §6.1 (header.payload with an empty signature). Anything else
+        // (e.g. a plain JSON body or a JWE) is not a request object we can process.
+        let componentCount = requestUriResponse.split(separator: ".").count
+        guard componentCount == 2 || componentCount == 3 else {
             throw InvalidData(
                 message: "Authorization Request Object must be a signed JWT", className: className)
         }
-        
-        try await validateJWTRequest(requestUriResponse)
-        
-        let authorizationRequestObject =  try JWSHandler.extractDataJsonFromJws(jws: requestUriResponse, jwsPart: .payload)
-        if(requestUriMethod == .post){
+
+        return try await processRequestObject(
+            requestUriResponse,
+            deliveredVia: AuthorizationRequestFieldConstants.requestUri,
+            requestUriMethod: requestUriMethod
+        )
+    }
+
+    /// Obtains and validates a request object delivered by value (`request`) or by reference
+    /// (`request_uri`), branching on the JOSE header `alg` instead of assuming the object is
+    /// signed. An unsigned (`alg: none`) request object is accepted only for client_id_prefixes
+    /// that declare unsigned support and is never signature-verified; anything else is treated as
+    /// signed, accepted only for prefixes that declare signed support, and signature-verified.
+    private func processRequestObject(_ requestObject: String, deliveredVia: String, requestUriMethod: RequestUriMethod?) async throws -> [String: Any] {
+        if joseHeaderAlgorithm(of: requestObject) == unsignedRequestAlgorithm {
+            guard (try delegate.isUnsignedRequestSupported()) else {
+                throw InvalidData(
+                    message: "unsigned request is not supported for given client_id_prefix - \(delegate.clientIdPrefix())",
+                    className: className
+                )
+            }
+        } else {
+            guard (delegate.isSignedRequestSupported()) else {
+                throw InvalidData(
+                    message: "Signed request (via \(deliveredVia)) is not supported for given client_id_prefix - \(delegate.clientIdPrefix())",
+                    className: className
+                )
+            }
+            try await validateJWTRequest(requestObject)
+        }
+
+        let authorizationRequestObject = try JWSHandler.extractDataJsonFromJws(jws: requestObject, jwsPart: .payload)
+        if requestUriMethod == .post {
             try validateWalletNonce(authorizationRequestObject, walletNonce)
         }
-        
+
         try validateAuthorizationRequestObjectAndParameters(params: authorizationRequestParameters, requestObject: authorizationRequestObject)
-        
+
         return authorizationRequestObject
+    }
+
+    /// Returns the JOSE header `alg` of a compact JWT, or `nil` when the header cannot be parsed
+    /// or carries no `alg`. A `nil` result is treated as signed so that `validateJWTRequest`
+    /// surfaces the precise malformed-header / missing-`alg` error.
+    private func joseHeaderAlgorithm(of compactJWT: String) -> String? {
+        guard let header = try? JWSHandler.extractDataJsonFromJws(jws: compactJWT, jwsPart: .header) else {
+            return nil
+        }
+        return header["alg"] as? String
     }
     
     // If the key is not associated with the client or if signature validation fails, error code = invalid_request_object

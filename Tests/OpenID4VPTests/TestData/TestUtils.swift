@@ -150,6 +150,22 @@ func createAuthorizationRequestObject(
 }
 
 
+func createUnsignedAuthorizationRequestObject(
+    clientIdPrefix: ClientIdPrefix,
+    authorizationRequestParams: [String: Any],
+    applicableFields: [String]? = nil,
+    specVersion: SpecVersion = .v1
+) throws -> String {
+    let parametersList = applicableFields ?? authRequestClientIdPrefixMap[clientIdPrefix]!
+    let authorizationRequestParameters = createAuthorizationRequest(paramList: parametersList, requestParams: authorizationRequestParams, specVersion: specVersion)
+    let payload = authorizationRequestParameters.compactMapValues { $0 }
+    // Compact JWT with an "alg": "none" JOSE header and an empty signature (RFC 7519 §6.1).
+    return try JWSHandler.createUnsignedJWS(
+        header: ["typ": "oauth-authz-req+jwt", "alg": "none"],
+        payload: payload
+    )
+}
+
 func convertToJsonString(_ data: [String: Any]) -> String {
     let jsonData = try? JSONSerialization.data(withJSONObject: data, options: [])
     let jsonString = String(data: jsonData!, encoding: .utf8)

@@ -325,7 +325,15 @@ final class ClientIdPrefixBasedAuthorizationRequestTests : XCTestCase {
     }
     
     func testShouldThrowErrorWhenAuthorizationRequestIsPassedByReferenceAndSignedRequestIsNotSupported() async {
+        // A signed (alg != none) request object delivered by reference for redirect_uri cannot be
+        // trust-anchored, so it must still be rejected (OpenID4VP 1.0 §5.9.3).
+        let signedRequestObject = createAuthorizationRequestObject(
+            clientIdPrefix: .redirectUri,
+            authorizationRequestParams: mergeMaps(authorizationRequestParamsWithValue, redirectUriSchemeClientIdParameter),
+            applicableFields: authRequestWithRedirectUriByValue
+        )
         let authorizationRequestParametersByReference: [String : Any] = createAuthorizationRequest(paramList: authRequestParamsByReference , requestParams: mergeMaps(authorizationRequestParamsWithValue, redirectUriSchemeClientIdParameter), specVersion: .v1) as [String : Any]
+        mockNetworkManager.setMockResponse(for: requestUri.absoluteString, responseBody: signedRequestObject)
         let mockAuthHandler = MockClientIdPrefixAuthRequestHandler(
             authorizationRequestParameters: authorizationRequestParametersByReference,
             setResponseUri: mockSetResponseUri,
@@ -337,7 +345,7 @@ final class ClientIdPrefixBasedAuthorizationRequestTests : XCTestCase {
             isSignedRequestSupported: false,
             isUnsignedRequestSupported: true
         )
-        
+
         await XCTAssertAsyncThrowsError(try await mockAuthHandler.fetchAuthorizationRequest()) { error in
             assertOpenID4VPException(error,
                                      expectedMessage: "Signed request (via request_uri) is not supported for given client_id_prefix - redirect_uri",
@@ -345,7 +353,96 @@ final class ClientIdPrefixBasedAuthorizationRequestTests : XCTestCase {
             )
         }
     }
-    
+
+    func testFetchAuthorizationRequestByReferenceWithUnsignedRequestObjectViaPostIsAcceptedForRedirectUri() async throws {
+        mockNetworkManager.clearResponses()
+        // Unsigned (alg:none) request object delivered by reference, as real redirect_uri verifiers
+        // (e.g. Digital Bazaar / Veres) do with request_uri_method=post.
+        let unsignedRequestObject = try createUnsignedAuthorizationRequestObject(
+            clientIdPrefix: .redirectUri,
+            authorizationRequestParams: mergeMaps(authorizationRequestParamsWithValue, redirectUriSchemeClientIdParameter, ["wallet_nonce": "mock-nonce"]),
+            applicableFields: authRequestWithRedirectUriByValue + [AuthorizationRequestFieldConstants.walletNonce]
+        )
+        let authorizationRequestParametersByReference: [String : Any] = createAuthorizationRequest(paramList: authRequestParamsByReference , requestParams: mergeMaps(authorizationRequestParamsWithValue, redirectUriSchemeClientIdParameter, ["request_uri_method": "post"]), specVersion: .v1) as [String : Any]
+        mockNetworkManager.setMockResponse(for: requestUri.absoluteString, responseBody: unsignedRequestObject)
+        let mockAuthHandler = MockClientIdPrefixAuthRequestHandler(
+            authorizationRequestParameters: authorizationRequestParametersByReference,
+            setResponseUri: mockSetResponseUri,
+            walletNonce: "mock-nonce",
+            networkManager: mockNetworkManager,
+            clientId: "mock-client-id",
+            specVersion: .v1,
+            walletConfig: walletConfig,
+            isSignedRequestSupported: false,
+            isUnsignedRequestSupported: true
+        )
+
+        await XCTAssertNoThrowAndVerifyAsync(try await mockAuthHandler.fetchAuthorizationRequest()) {
+            XCTAssertEqual(mockAuthHandler.authorizationRequestParameters[AuthorizationRequestFieldConstants.responseType] as? String, "vp_token")
+            XCTAssertEqual(mockAuthHandler.authorizationRequestParameters[AuthorizationRequestFieldConstants.responseMode] as? String, "direct_post")
+            XCTAssertEqual(mockNetworkManager.recordedRequests[requestUri.absoluteString]?.requestMethod, .post, "Expected HTTP method to be POST")
+        }
+    }
+
+    func testFetchAuthorizationRequestByValueWithUnsignedRequestObjectIsAcceptedForRedirectUri() async throws {
+        // Unsigned (alg:none) request object delivered inline via the request parameter.
+        let unsignedRequestObject = try createUnsignedAuthorizationRequestObject(
+            clientIdPrefix: .redirectUri,
+            authorizationRequestParams: mergeMaps(authorizationRequestParamsWithValue, redirectUriSchemeClientIdParameter),
+            applicableFields: authRequestWithRedirectUriByValue
+        )
+        let authorizationRequestParametersByValue: [String : Any] = [
+            AuthorizationRequestFieldConstants.request: unsignedRequestObject,
+            AuthorizationRequestFieldConstants.clientId: "redirect_uri:https://mock-verifier.com"
+        ]
+        let mockAuthHandler = MockClientIdPrefixAuthRequestHandler(
+            authorizationRequestParameters: authorizationRequestParametersByValue,
+            setResponseUri: mockSetResponseUri,
+            walletNonce: "mock-nonce",
+            networkManager: mockNetworkManager,
+            clientId: "mock-client-id",
+            specVersion: .v1,
+            walletConfig: walletConfig,
+            isSignedRequestSupported: false,
+            isUnsignedRequestSupported: true
+        )
+
+        await XCTAssertNoThrowAndVerifyAsync(try await mockAuthHandler.fetchAuthorizationRequest()) {
+            XCTAssertEqual(mockAuthHandler.authorizationRequestParameters[AuthorizationRequestFieldConstants.responseType] as? String, "vp_token")
+            XCTAssertEqual(mockAuthHandler.authorizationRequestParameters[AuthorizationRequestFieldConstants.responseMode] as? String, "direct_post")
+        }
+    }
+
+    func testShouldThrowErrorWhenUnsignedRequestObjectIsReceivedButUnsignedRequestIsNotSupported() async throws {
+        // A client_id_prefix that does not support unsigned requests (e.g. decentralized_identifier)
+        // must reject an unsigned request object delivered by reference.
+        let unsignedRequestObject = try createUnsignedAuthorizationRequestObject(
+            clientIdPrefix: .decentralizedIdentifier,
+            authorizationRequestParams: mergeMaps(authorizationRequestParamsWithValue, DidSchemeClientIdParameters[.v1]!),
+            applicableFields: authRequestWithDidByValue
+        )
+        let authorizationRequestParametersByReference: [String : Any] = createAuthorizationRequest(paramList: authRequestParamsByReference , requestParams: mergeMaps(authorizationRequestParamsWithValue, DidSchemeClientIdParameters[.v1]!), specVersion: .v1) as [String : Any]
+        mockNetworkManager.setMockResponse(for: requestUri.absoluteString, responseBody: unsignedRequestObject)
+        let mockAuthHandler = MockClientIdPrefixAuthRequestHandler(
+            authorizationRequestParameters: authorizationRequestParametersByReference,
+            setResponseUri: mockSetResponseUri,
+            walletNonce: "mock-nonce",
+            networkManager: mockNetworkManager,
+            clientId: "mock-client-id",
+            specVersion: .v1,
+            walletConfig: walletConfig,
+            isSignedRequestSupported: true,
+            isUnsignedRequestSupported: false
+        )
+
+        await XCTAssertAsyncThrowsError(try await mockAuthHandler.fetchAuthorizationRequest()) { error in
+            assertOpenID4VPException(error,
+                                     expectedMessage: "unsigned request is not supported for given client_id_prefix - decentralized_identifier",
+                                     expectedCode: OpenID4VPErrorCodes.invalidRequest
+            )
+        }
+    }
+
     func testShouldMakeApiCallToRequestUriGetWithCorrectAcceptType() async {
         mockNetworkManager.clearResponses()
         let authorizationRequestParametersByReference: [String : Any] = createAuthorizationRequest(paramList: authRequestParamsByReference , requestParams: mergeMaps(authorizationRequestParamsWithValue, DidSchemeClientIdParameters[.v1]!, ["request_uri_method": "get"])) as [String : Any]
