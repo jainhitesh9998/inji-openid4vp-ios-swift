@@ -108,7 +108,13 @@ class UnsignedLdpVPTokenBuilder: UnsignedVPTokenBuilder {
     }
     
     private func buildPayloadAndUnsignedVPToken(identifier: String, with credentials: [AnyCodable], signatureSuite: String?, holder: String?) async throws -> (vpTokenSigningPayload: LdpVP, unsignedVPToken: UnsignedVPToken?) {
-        var context: [String] = ["https://www.w3.org/2018/credentials/v1"]
+        // CCP fork: the VP-envelope @context uses VCDM **v2** to match the embedded
+        // v2 credential. In v2 the `verifiableCredential` term carries `@context: null`,
+        // which resets the nested VC's context so the VP envelope and the VC don't
+        // layer v1+v2 protected terms (e.g. VerifiableCredential/validUntil). With a
+        // v1 envelope a strict verifier (Digital Bazaar / ccp-pilot) raises "protected
+        // term redefinition" and returns HTTP 400 on the VP POST.
+        var context: [String] = ["https://www.w3.org/ns/credentials/v2"]
         if signatureSuite == SignatureSuite.ed25519Signature2020.rawValue {
             context.append("https://w3id.org/security/suites/ed25519-2020/v1")
         } else if signatureSuite == SignatureSuite.jsonWebSignature2020.rawValue {
@@ -123,15 +129,24 @@ class UnsignedLdpVPTokenBuilder: UnsignedVPTokenBuilder {
             throw InvalidData(message: "Signature suite is required for LDP VP Tokens", className: className)
         }
         
+        // ccp-pilot / Digital Bazaar verify the VP's OWN proof with proofPurpose
+        // "authentication" (holder binding). Without it the verifier filters our
+        // proof out before signature checking — "Did not verify any proofs;
+        // insufficient proofs matched the acceptable suite(s) and required
+        // purpose(s)" — and returns HTTP 400. So: Ed25519Signature2020 + created +
+        // verificationMethod = holder (did:jwk#0) + proofPurpose = authentication.
+        let created = ISO8601DateFormatter().string(from: Date())
+
         let proof = Proof(
             type: signatureSuite,
-            created: nil,
+            created: created,
             challenge: authorizationRequest.nonce,
             domain: authorizationRequest.clientId,
+            proofPurpose: .vpProofPurpose,
             verificationMethod: holder,
             proofValue: nil
         )
-        
+
         let vpTokenSigningPayload : LdpVP = .vp(
             LdpVPToken(
                 context: context,
@@ -203,9 +218,14 @@ class UnsignedLdpVPTokenBuilder: UnsignedVPTokenBuilder {
         }
         
         
-        return (holder: holderId, signatureSuite: SignatureSuite.jsonWebSignature2020.rawValue)
+        // CCP fork: sign the VP with Ed25519Signature2020 (the wallet key is Ed25519;
+        // the verifier accepts Ed25519Signature2020 — JsonWebSignature2020 is not in
+        // proof_type_values). Matches Android's working PDI recipe: did:jwk holder +
+        // verificationMethod, Ed25519Signature2020 with a base58btc multibase
+        // proofValue, and a `created` timestamp (set in buildPayloadAndUnsignedVPToken).
+        return (holder: holderId, signatureSuite: SignatureSuite.ed25519Signature2020.rawValue)
     }
-    
+
     private func sanitize(_ holderId: String?) -> String? {
         guard let holderId = holderId else {
             return nil

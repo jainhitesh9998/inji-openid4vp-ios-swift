@@ -22,7 +22,8 @@ public struct NetworkManager: NetworkManaging {
         bodyParams requestBody: [String: String]? = nil,
         headers: [String: String]? = nil
     ) async throws -> NetworkResponse {
-        
+        NSLog("🟢OVPWIRE-REQ %@ %@ body=%@", String(describing: method), url, String(describing: requestBody))
+
         let requestHeaders: HTTPHeaders? = headers?.reduce(into: HTTPHeaders()) { result, header in
             result.add(name: header.key, value: header.value)
         }
@@ -54,6 +55,7 @@ public struct NetworkManager: NetworkManaging {
                             body: responseBody,
                             headers: httpResponse.headers.dictionary
                         )
+                        NSLog("🟢OVPWIRE-RESP %d %@", httpResponse.statusCode, responseBody)
                         continuation.resume(returning: networkResponse)
                     } else {
                         let exception = NetworkRequestException.invalidResponse(message: "Invalid response received")

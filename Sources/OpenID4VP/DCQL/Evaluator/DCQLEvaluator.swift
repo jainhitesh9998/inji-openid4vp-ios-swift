@@ -213,6 +213,11 @@ internal struct DcqlEvaluator {
     }
     
     private func matchesExpectedValues(_ claimValue: Any, expectedValues: [ClaimValue]) -> Bool {
+        // A claim value can be an array (e.g. `type`, or any multi-valued field);
+        // DCQL value matching is membership-based, so match if ANY element matches.
+        if let claimArray = claimValue as? [Any] {
+            return claimArray.contains { matchesExpectedValues($0, expectedValues: expectedValues) }
+        }
         return expectedValues.contains { expected in
             switch expected {
             case .string(let v):

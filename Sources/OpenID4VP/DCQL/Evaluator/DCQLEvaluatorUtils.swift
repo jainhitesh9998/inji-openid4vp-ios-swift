@@ -136,7 +136,7 @@ func resolveClaimsPathPointer(_ path: [AnyCodable], in claims: [String: Any]) th
                     throw InvalidData(message: "currently selected element(s) is not an object", className: className)
                 }
             }
-        } else if let pathPointerValue = pathPointer.value as? Int {
+        } else if let pathPointerValue = intIndex(from: pathPointer.value) {
             if let selectedArray = selectedElement as? [Any] {
                 if (pathPointerValue >= selectedArray.count || pathPointerValue < 0) {
                     selectedElement = nil
@@ -161,4 +161,14 @@ func resolveClaimsPathPointer(_ path: [AnyCodable], in claims: [String: Any]) th
 
 private func isNullPathPointer(_ value: Any?) -> Bool {
     return value is NSNull || String(describing: value) == "nil" || String(describing: value) == "Optional(nil)" || String(describing: value).contains("Optional<Any>.none") || String(describing: value).contains("Optional<NSNull>.some") || String(describing: value) == "Optional<Any>(nil)"
+}
+
+// A JSON array index in a claims path may decode as Int, Double, or NSNumber
+// depending on the parser (AnyCodable often yields Double), so accept any integral
+// numeric form — otherwise paths like `["@context", 0]` throw and resolve to nil.
+private func intIndex(from value: Any?) -> Int? {
+    if let i = value as? Int { return i }
+    if let d = value as? Double, d == d.rounded() { return Int(d) }
+    if let n = value as? NSNumber { return n.intValue }
+    return nil
 }
