@@ -390,7 +390,8 @@ public class AuthorizationResponseHandler {
                 let mapping = CredentialInputDescriptorMapping(
                     format: credential.format,
                     credential: credential.data,
-                    inputDescriptorId: inputDescriptorId
+                    inputDescriptorId: inputDescriptorId,
+                    walletHolder: credential.walletHolder
                 )
                 formatToCredentialInputDescriptorMapping[credential.format, default: []].append(mapping)
             }

@@ -42,9 +42,9 @@ class UnsignedLdpVPTokenBuilder: UnsignedVPTokenBuilder {
             
             let verifiableCredentials: [AnyCodable] = [credential]
 
-            
-            let result = try extractHolderAndSignatureSuite(credential)
-            
+
+            let result = try extractHolderAndSignatureSuite(credential, walletHolder: credentialInputDescriptorMapping.walletHolder)
+
             let (vpTokenSigningPayload, unsignedVPToken) = try await buildPayloadAndUnsignedVPToken(
                 identifier: identifier,
                 with: verifiableCredentials,
@@ -208,12 +208,17 @@ class UnsignedLdpVPTokenBuilder: UnsignedVPTokenBuilder {
         return (vpTokenSigningPayload, unsignedVPToken)
     }
     
-    private func extractHolderAndSignatureSuite(_ credential: AnyCodable) throws -> (holder: String, signatureSuite: String) {
+    private func extractHolderAndSignatureSuite(_ credential: AnyCodable, walletHolder: String? = nil) throws -> (holder: String, signatureSuite: String) {
         guard let credentialDict = credential.value as? [String: Any] else {
             throw InvalidData(message: "Credential is not a valid JSON object", className: className)
         }
-        
-        guard let credentialSubject = credentialDict["credentialSubject"] as? [String: Any], let holderId = credentialSubject["id"] as? String else {
+
+        // Prefer the credential's own holder binding (credentialSubject.id). Bearer
+        // credentials with no credentialSubject.id (e.g. veres.dev EMT) fall back to
+        // the wallet holder DID supplied by the app layer, so VP construction no
+        // longer fails with "Holder ID not available in the credential".
+        let credentialSubject = credentialDict["credentialSubject"] as? [String: Any]
+        guard let holderId = (credentialSubject?["id"] as? String) ?? walletHolder else {
             throw InvalidData(message: "Holder ID not available in the credential", className: className)
         }
         

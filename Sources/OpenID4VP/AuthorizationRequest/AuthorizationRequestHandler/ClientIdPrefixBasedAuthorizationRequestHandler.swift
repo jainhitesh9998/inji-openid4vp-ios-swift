@@ -215,7 +215,6 @@ class ClientIdPrefixBasedAuthorizationRequestHandlerBaseClass  {
             try await validateJWTRequest(requestObject)
         }
 
-        let isSignedRequestObject = joseHeaderAlgorithm(of: requestObject) != unsignedRequestAlgorithm
         let authorizationRequestObject = try JWSHandler.extractDataJsonFromJws(jws: requestObject, jwsPart: .payload)
         // wallet_nonce is only sent + echoed for signed requests (§5.10); skip for unsigned (alg:none).
         if requestUriMethod == .post && isSignedRequestObject {

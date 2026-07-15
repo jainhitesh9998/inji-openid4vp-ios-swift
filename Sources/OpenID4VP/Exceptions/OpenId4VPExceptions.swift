@@ -385,7 +385,10 @@ class VerifiablePresentationConstructionFailure : OpenID4VPException {
     init(cause: Error, className: String) {
         super.init(
             errorCode: OpenID4VPErrorCodes.serverError,
-            message: "The wallet encountered an internal error while preparing the presentation.",
+            // DEV DIAGNOSTIC: surface the underlying cause in the message so the JS
+            // layer / Metro log shows exactly what VP construction choked on.
+            // (Revert to the plain message before a production build.)
+            message: "The wallet encountered an internal error while preparing the presentation. [cause: \(cause)]",
             cause: cause,
             className: className
         )
